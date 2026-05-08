@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Oteldemo;
 using Microsoft.EntityFrameworkCore;
 using System.Diagnostics;
+using OpenTelemetry;
 
 namespace Accounting;
 
@@ -62,8 +63,16 @@ internal class Consumer : IDisposable
             {
                 try
                 {
-                    using var activity = MyActivitySource.StartActivity("order-consumed",  ActivityKind.Internal);
                     var consumeResult = _consumer.Consume();
+                    
+                    // Extract trace context from Kafka message headers
+                    var parentContext = ExtractTraceContextFromHeaders(consumeResult.Message.Headers);
+                    
+                    using var activity = MyActivitySource.StartActivity(
+                        "order-consumed",
+                        ActivityKind.Internal,
+                        parentContext);
+                    
                     ProcessMessage(consumeResult.Message);
                 }
                 catch (ConsumeException e)
@@ -151,6 +160,35 @@ internal class Consumer : IDisposable
 
         return new ConsumerBuilder<string, byte[]>(conf)
             .Build();
+    }
+
+    private static ActivityContext ExtractTraceContextFromHeaders(IEnumerable<Header> headers)
+    {
+        // Convert Kafka headers to a dictionary format compatible with W3CTraceContextPropagator
+        var headerDict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var header in headers)
+        {
+            if (header.Value != null)
+            {
+                headerDict[header.Key] = System.Text.Encoding.UTF8.GetString(header.Value);
+            }
+        }
+
+        // Extract trace context using W3CTraceContextPropagator
+        var propagator = new W3CTraceContextPropagator();
+        var extractionContext = propagator.Extract(
+            default,
+            headerDict,
+            (carrier, key) =>
+            {
+                if (carrier.TryGetValue(key, out var value))
+                {
+                    return new[] { value };
+                }
+                return Enumerable.Empty<string>();
+            });
+
+        return extractionContext.ActivityContext;
     }
 
     public void Dispose()
