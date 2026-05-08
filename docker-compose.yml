@@ -771,10 +771,18 @@ services:
     environment:
       - FLAGD_HOST
       - FLAGD_PORT
+      - OTEL_PYTHON_LOG_CORRELATION=true
+      - OTEL_EXPORTER_OTLP_ENDPOINT
+      - OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE
+      - OTEL_RESOURCE_ATTRIBUTES
+      - OTEL_SERVICE_NAME=llm
+      - OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true
     ports:
       - "${LLM_PORT}"
     depends_on:
       flagd:
+        condition: service_started
+      otel-collector:
         condition: service_started
     logging: *logging
 

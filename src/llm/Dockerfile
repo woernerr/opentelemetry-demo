@@ -12,6 +12,8 @@ COPY ./src/llm/requirements.txt requirements.txt
 RUN python -m venv venv && \
     venv/bin/pip install --no-cache-dir -r requirements.txt
 
+RUN venv/bin/opentelemetry-bootstrap -a install
+
 FROM docker.io/library/python:3.12-alpine3.22
 
 COPY --from=build-venv /venv/ /venv/
@@ -23,4 +25,4 @@ COPY ./src/llm/product-review-summaries/product-review-summaries.json product-re
 COPY ./src/llm/product-review-summaries/inaccurate-product-review-summaries.json inaccurate-product-review-summaries.json
 
 EXPOSE ${LLM_PORT}
-ENTRYPOINT [ "/venv/bin/python", "app.py" ]
+ENTRYPOINT [ "/venv/bin/opentelemetry-instrument", "/venv/bin/python", "app.py" ]
