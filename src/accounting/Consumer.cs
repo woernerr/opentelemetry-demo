@@ -62,8 +62,9 @@ internal class Consumer : IDisposable
             {
                 try
                 {
-                    using var activity = MyActivitySource.StartActivity("order-consumed",  ActivityKind.Internal);
                     var consumeResult = _consumer.Consume();
+                    var parentContext = ExtractActivityContextFromHeaders(consumeResult.Message.Headers);
+                    using var activity = MyActivitySource.StartActivity("order-consumed",  ActivityKind.Internal, parentContext: parentContext);
                     ProcessMessage(consumeResult.Message);
                 }
                 catch (ConsumeException e)
@@ -80,6 +81,52 @@ internal class Consumer : IDisposable
             _logger.LogInformation("Closing consumer");
 
             _consumer.Close();
+        }
+    }
+
+    private static ActivityContext ExtractActivityContextFromHeaders(Headers headers)
+    {
+        try
+        {
+            // Look for the traceparent header which contains W3C TraceContext
+            var traceparentHeader = headers.FirstOrDefault(h => h.Key == "traceparent");
+            if (traceparentHeader == null || traceparentHeader.Value == null)
+            {
+                return default;
+            }
+
+            var traceparentValue = System.Text.Encoding.UTF8.GetString(traceparentHeader.Value);
+            // Format: 00-traceId-spanId-traceFlags
+            var parts = traceparentValue.Split('-');
+            if (parts.Length < 4)
+            {
+                return default;
+            }
+
+            var traceIdHex = parts[1];
+            var spanIdHex = parts[2];
+            var traceFlagsHex = parts[3];
+
+            if (!System.Diagnostics.ActivityTraceId.TryParse(traceIdHex, out var traceId) ||
+                !System.Diagnostics.ActivitySpanId.TryParse(spanIdHex, out var spanId))
+            {
+                return default;
+            }
+
+            var traceFlags = byte.TryParse(traceFlagsHex, System.Globalization.NumberStyles.HexNumber, null, out var flags)
+                ? (System.Diagnostics.ActivityTraceFlags)flags
+                : System.Diagnostics.ActivityTraceFlags.None;
+
+            // Check for tracestate header (optional)
+            var traceStateHeader = headers.FirstOrDefault(h => h.Key == "tracestate");
+            var traceState = traceStateHeader?.Value != null ? System.Text.Encoding.UTF8.GetString(traceStateHeader.Value) : null;
+
+            return new ActivityContext(traceId, spanId, traceFlags, traceState);
+        }
+        catch (Exception)
+        {
+            // If anything goes wrong during extraction, return default context (no parent)
+            return default;
         }
     }
 
